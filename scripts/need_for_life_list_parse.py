@@ -1,4 +1,7 @@
 import re
+import sys
+import argparse
+from datetime import datetime, timedelta, date
 
 def parse_ebird_alert_text(alert_text):
     """
@@ -39,6 +42,7 @@ def filter_records_by_county(records, counties_of_interest):
     """
     Filters records based on the county appearing in the second line.
     """
+
     filtered = []
     for record in records:
         if len(record['lines']) < 2:
@@ -56,22 +60,62 @@ def filter_records_by_species_count(records, min_count=10):
     """
     return [record for record in records if record['count'] >= min_count]
 
-def filter_records_by_last_seen(records, last_seen):
+def parse_reported_date(date_string):
     """
-    debugging - print out the records
+    Parses a date string in the format "- Reported Mar 12, 2025 11:55 by ..."
+    and returns a datetime object.
+
+    Args:
+        date_string: The string containing the date and time.
+
+    Returns:
+        A datetime object representing the parsed date and time, or None if parsing fails.
     """
-    # stub for now
-    return records
+    match = re.search(r"- Reported (\w{3} \d{1,2}, \d{4} \d{2}:\d{2})", date_string)
+    if match:
+        date_time_str = match.group(1)
+        try:
+            # Parse the date and time string
+            date_time_obj = datetime.strptime(date_time_str, "%b %d, %Y %H:%M")
+            return date_time_obj
+        except ValueError:
+            print(f"Error: Could not parse date/time string: {date_time_str}")
+            return None
+    else:
+        print(f"Error: Could not find date/time pattern in string: {date_string}")
+        return None
+
+def filter_records_by_after_days_ago(records, days_ago=50):
+    """
+    Filters records based on the reported date.
+    """
+    filtered_records = []
+    for record in records:
+        if not record['lines']:
+            continue # skip if there are no lines
+        first_line = record['lines'][0]
+        reported_date = parse_reported_date(first_line)
+
+        if reported_date:
+             # Calculate the date that is 'days_ago' days ago from today
+            cutoff_date = datetime.now() - timedelta(days=days_ago)
+
+            # check the date is more recent than "days_ago"
+            if reported_date >= cutoff_date:
+                filtered_records.append(record)
+    return filtered_records
+
 def main():
     import sys
     import argparse
-    from datetime import date, timedelta
+    # detect if there is any data in stdin
     raw_text = sys.stdin.read()
+
     parser = argparse.ArgumentParser(description="Parse eBird alert emails and filter by count threshold.")
     parser.add_argument("--threshold", type=int, default=5, help="Minimum count of species to include in the output.")
     parser.add_argument("--counties", nargs='*', default=["Larimer", "Boulder", "Arapahoe", "Weld", "Denver", "Jefferson", "Douglas", "Adams"], help="List of county names to filter by.")
-   
-    parser.add_argument("--date", type=lambda s: date.fromisoformat(s), default=date.today() - timedelta(days=1), help="Date for eBird alerts in YYYY-MM-DD format, defaults to yesterday.")
+    parser.add_argument("--days-ago", type=int, default=50, help="days back")
+                        
     args = parser.parse_args()
 
     # Parse into records
@@ -85,17 +129,11 @@ def main():
     filtered_by_count = filter_records_by_species_count(filtered_by_county, min_count=args.threshold)
     print(f"Filtered by species count (>=5 sightings): {len(filtered_by_count)} records.\n")
 
-    filtered_by_date = filter_records_by_last_seen(filtered_by_count, last_seen=args.date)
+    filtered_by_date = filter_records_by_after_days_ago(filtered_by_count, days_ago=args.days_ago)
+    print(f"Filtered by date: {len(filtered_by_date)} records.\n")
 
-        # Print the filtered records
-    for rec in filtered_by_date:
-        print(f"{rec['species']} ({rec['scientific_name']}) x{rec['count']}")
-        for line in rec['lines']:
-            print("  " + line)
-        print("-" * 60)
-
-     # Sort records by species name
-    sorted_records = sorted(filtered_by_count, key=lambda rec: rec['species'])
+    # Sort records by species name
+    sorted_records = sorted(filtered_by_date, key=lambda rec: rec['species'])
 
     # Print the filtered records
     for rec in sorted_records:
@@ -106,4 +144,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
